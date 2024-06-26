@@ -7,6 +7,7 @@ import argparse
 
 from subprocess import Popen, PIPE, STDOUT, TimeoutExpired
 from time import sleep
+from random import shuffle
 
 from string import Template
 from itertools import product
@@ -29,13 +30,13 @@ class FioJob(object):
             return ', '.join('%s=%s' % (str(k), str(v)) for k, v in self.mapping.items())
 
 
-    def run(self, extra=''):
-        logger.debug("Fio input:\n" + self.fio)
-        logger.info("start " + str(self))
+    def run(self):
+        logger.debug("fio input:\n" + self.fio)
+        logger.info("start|" + str(self))
         self.proc = Popen(self.cmd, stdin=PIPE, stdout=PIPE, stderr=PIPE, text=True)
         try:
             self.result = self.proc.communicate(input=self.fio, timeout=cmdline.timeout)
-            logger.info("stop " + str(self))
+            logger.info("stop|" + str(self))
         except TimeoutExpired:
             logger.error("Timeout waiting for " + str(self))
             self.success = False
@@ -52,7 +53,8 @@ class FioJob(object):
             return
 
         text = self.result[0].rstrip('\n')
-        text += extra + ';' + ';'.join(str(v) for v in self.mapping.values()) + '\n'
+        to_append = ';' + ';'.join(str(self.mapping[k]) for k in self.order)
+        text = '\n'.join([line + to_append for line in text.splitlines()]) + '\n'
         cmdline.output.write(text)
         cmdline.output.flush()
         self.success = True
@@ -78,7 +80,7 @@ def read_params(filename):
 
     elif 'replicate' in params:
         if type(params['replicate']) is not list:
-            params['replicate'] = list(params['replicate'])
+            params['replicate'] = [params['replicate']]
 
     if 'fio' in params and type(params['fio']) is dict:
         # Replace single values with singleton lists
@@ -100,7 +102,9 @@ def parse_cmdline():
     parser.add_argument('--log', '-l')
     parser.add_argument('--verbose', '-v', action='count', default=0)
     parser.add_argument('--timeout', type=float)
+    parser.add_argument('--norandom', action='store_true', help="Do not shuffle jobs")
     parser.add_argument('--cooldown', metavar='SECONDS', type=float, default=2, help="cool down time between jobs")
+    parser.add_argument('--no_drop_caches', action='store_true', help="Do not attempt to drop caches before each workload")
     parsed = parser.parse_args()
 
     parsed.parameters = read_params(parsed.parameters)
@@ -128,41 +132,60 @@ def setup_logger(cmdline):
     return logger
 
 
-def apply_template(template, params):
-    t = Template(template)
-    t.substitute(params)
+def drop_caches():
+    if cmdline.no_drop_caches: return
+    try:
+        drop_caches = '/proc/sys/vm/drop_caches'
+        logger.debug('echo 3 > ' + drop_caches)
+        with open(drop_caches, 'w') as f:
+            f.write('3')
+    except FileNotFoundError:
+        logger.debug('File not found ' + drop_caches)
+    except PermissionError:
+        logger.debug('Permission denied ' + drop_caches)
 
 
 def main():
-    jobs = []
     param_keys = list(cmdline.fio_params.keys())
-    for template in cmdline.templates:
-        param_values = product(*[cmdline.fio_params[k] for k in param_keys])
-
-        t = Template(template)
-        for values in param_values:
-            mapping = { k: values[i] for i, k in enumerate(param_keys) }
-            job = FioJob(fio_script=t.substitute(mapping), mapping=mapping)
-            jobs.append(job)
-        
-    logger.info("Number of jobs: %d" % len(jobs))
-
-    cmdline.output.write(FioJob.fio_headers + ';replicate;' + ';'.join(param_keys) + '\n')
+    cmdline.output.write(FioJob.fio_headers + ';' + ';'.join(param_keys) + ';replicate\n')
     cmdline.output.flush()
 
+    all_jobs = {}
     for replicate in cmdline.parameters['replicate']:
         logger.info("Starting replicate %s" % str(replicate))
 
-        for job_num, job in enumerate(jobs):
-            logger.info("Starting job %d of %d" % (job_num + 1, len(jobs)))
+        replicate_jobs = []
+        for template in cmdline.templates:
+            param_values = product(*[cmdline.fio_params[k] for k in param_keys])
+
+            if not cmdline.norandom:
+                param_values = list(param_values)
+                shuffle(param_values)
+
+            t = Template(template)
+            for values in param_values:
+                mapping = { k: values[i] for i, k in enumerate(param_keys) }
+                mapping['replicate'] = replicate
+                job = FioJob(fio_script=t.substitute(mapping), mapping=mapping, order=param_keys + ['replicate'])
+                replicate_jobs.append(job)
+        all_jobs[replicate] = replicate_jobs
+        
+        logger.info("Number of jobs for replicate %s: %d" % (str(replicate), len(replicate_jobs)))
+
+        for job_num, job in enumerate(replicate_jobs):
+            drop_caches()
+            logger.info("Starting job %d of %d (replicate %s)" % \
+                        (job_num + 1, len(replicate_jobs), replicate))
             if cmdline.cooldown > 0:
-                logger.info("cooldown")
+                logger.info("cooldown %g seconds" % cmdline.cooldown)
                 sleep(cmdline.cooldown)
-            job.run(extra=';' + str(replicate))
+            job.run()
         logger.info("Finished replicate %s" % str(replicate))
 
-    successes = sum(job.success == True for job in jobs)
-    fails = sum(job.success == False for job in jobs)
+    successes, fails = 0, 0
+    for replicate_jobs in all_jobs.values():
+        successes += sum(job.success == True for job in replicate_jobs)
+        fails += sum(job.success == False for job in replicate_jobs)
     logger.info("Jobs: %d completed, %d failed" % (successes, fails))
 
 
