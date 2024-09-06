@@ -4,3 +4,7 @@
 *.json
 *.log
 *.csv
+*.hobo
+*.tar.gz
+*.tar.bz2
+*.tar.xz
