@@ -145,10 +145,10 @@ fio_agg = {
     **dict.fromkeys([
         'error',
         'read_kb',
-        'read_bandwidth',
+        'read_bandwidth_kb',
         'read_iops',
         'write_kb',
-        'write_bandwidth',
+        'write_bandwidth_kb',
         'write_iops',
         'cpu_user',
         'cpu_sys',
@@ -375,10 +375,12 @@ def main():
         x['num_samples'] = len(interval)
 
         # 'Active Power' is in watts, mean over interval
-        x['watts_mean'] = interval['Active Power'].mean()
+        x['watts_mean'] = interval['Active Power'].mean()*watt
 
         # 'Active Energy' is in Wh, sum and convert to joules
-        x['joules'] = 3600*interval['Active Energy'].sum()
+        # (This HOBO column can be troublesome; do not use)
+        #x['joules'] = 3600*interval['Active Energy'].sum()
+
         data.append(x)
 
     if not key_cols.issubset(set(fio.columns)):
@@ -394,6 +396,12 @@ def main():
 
     fio = agg_rows(fio, key_cols)
     joined = df.join(fio.set_index(key_cols), on=key_cols)
+
+    # Calculated columns 
+    joined['iops'] = (joined['read_iops'] + joined['write_iops'])*(1/second)
+    joined['bandwidth'] = (joined['read_bandwidth_kb'] + joined['write_bandwidth_kb'])*kilobyte
+    joined['iopj'] = joined['iops']/joined['watts_mean']
+    joined['bpj'] = joined['bandwidth']/joined['watts_mean']
 
     if cmdline.all:
         print("Writing", cmdline.all, file=sys.stderr)
