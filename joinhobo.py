@@ -406,7 +406,7 @@ def main():
         medians = grouping.median().add_suffix('__median')
         stds = grouping.std().add_suffix('__std')
         a = pd.concat([means, medians, stds], axis=1)
-        print("Writing", cmdline.aggregate)
+        print("Writing", cmdline.output)
         a.to_csv(cmdline.output)
 
 
