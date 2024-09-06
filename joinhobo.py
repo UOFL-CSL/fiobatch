@@ -25,8 +25,8 @@ def read_cmdline():
     parser.add_argument('log', help="log file from fiobatch")
     parser.add_argument('fio', help="fio output CSV file")
     parser.add_argument('hobo', help="HOBO measurements CSV file")
-    parser.add_argument('--output', '-o', required=True, help="write joined CSV to file")
-    parser.add_argument('--aggregate', '-a', help="write aggregation (e.g. mean of replicates) CSV to file")
+    parser.add_argument('--output', '-o', required=True, help="write aggregation (e.g. mean of replicates) CSV to file")
+    parser.add_argument('--all', '-a', help="write joined CSV to file")
     parser.add_argument('--hoboshift', metavar='SECONDS', type=float, default=None, help='shift HOBO data by adding SECONDS to HOBO timestamps')
     return parser.parse_args()
 
@@ -395,11 +395,11 @@ def main():
     fio = agg_rows(fio, key_cols)
     joined = df.join(fio.set_index(key_cols), on=key_cols)
 
-    if cmdline.output:
-        print("Writing", cmdline.output, file=sys.stderr)
-        joined.to_csv(cmdline.output, index=False)
+    if cmdline.all:
+        print("Writing", cmdline.all, file=sys.stderr)
+        joined.to_csv(cmdline.all, index=False)
 
-    if cmdline.aggregate:
+    if cmdline.output:
         key_cols.remove('replicate')
         grouping = joined.groupby(key_cols)
         means = grouping.mean().add_suffix('__mean')
@@ -407,7 +407,7 @@ def main():
         stds = grouping.std().add_suffix('__std')
         a = pd.concat([means, medians, stds], axis=1)
         print("Writing", cmdline.aggregate)
-        a.to_csv(cmdline.aggregate)
+        a.to_csv(cmdline.output)
 
 
 if __name__ == '__main__':
