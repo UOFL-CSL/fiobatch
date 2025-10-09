@@ -63,8 +63,8 @@ class FioJob(object):
             return
 
         text = self.result[0].rstrip('\n')
-        to_append = ';' + ';'.join(str(self.mapping[k]) for k in self.order)
-        text = '\n'.join([line + to_append for line in text.splitlines()]) + '\n'
+        to_prepend = ';'.join(str(self.mapping[k]) for k in self.order) + ';'
+        text = '\n'.join([to_prepend + line for line in text.splitlines()]) + '\n'
         cmdline.output.write(text)
         cmdline.output.flush()
         self.success = True
@@ -157,7 +157,8 @@ def drop_caches():
 
 def main():
     param_keys = list(cmdline.fio_params.keys())
-    cmdline.output.write(FioJob.fio_headers + ';' + ';'.join(param_keys) + ';replicate\n')
+    order = ['replicate'] + param_keys
+    cmdline.output.write(';'.join(order) + ';' + FioJob.fio_headers + '\n')
     cmdline.output.flush()
 
     all_jobs = {}
@@ -176,7 +177,7 @@ def main():
             for values in param_values:
                 mapping = { k: values[i] for i, k in enumerate(param_keys) }
                 mapping['replicate'] = replicate
-                job = FioJob(fio_script=t.substitute(mapping), mapping=mapping, order=param_keys + ['replicate'])
+                job = FioJob(fio_script=t.substitute(mapping), mapping=mapping, order=order)
                 replicate_jobs.append(job)
         all_jobs[replicate] = replicate_jobs
         
