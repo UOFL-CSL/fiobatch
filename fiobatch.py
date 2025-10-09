@@ -143,16 +143,18 @@ def setup_logger(cmdline):
 
 
 def drop_caches():
-    if cmdline.no_drop_caches: return
+    if cmdline.no_drop_caches:
+        logger.debug('Skipping drop_caches, disabled by command line')
+        return
     try:
         drop_caches = '/proc/sys/vm/drop_caches'
-        logger.debug('echo 3 > ' + drop_caches)
+        logger.info('echo 3 > ' + drop_caches)
         with open(drop_caches, 'w') as f:
             f.write('3')
     except FileNotFoundError:
-        logger.debug('File not found ' + drop_caches)
+        logger.error('File not found ' + drop_caches)
     except PermissionError:
-        logger.debug('Permission denied ' + drop_caches)
+        logger.error('Permission denied ' + drop_caches)
 
 
 def main():
