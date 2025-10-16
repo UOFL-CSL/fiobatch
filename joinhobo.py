@@ -28,15 +28,16 @@ def read_cmdline():
     parser.add_argument('--output', '-o', required=True, help="write aggregation (e.g. mean of replicates) CSV to file")
     parser.add_argument('--all', '-a', help="write joined CSV to file")
     parser.add_argument('--hoboshift', metavar='SECONDS', type=float, default=None, help='shift HOBO data by adding SECONDS to HOBO timestamps')
+    parser.add_argument('--tz', default='UTC', help="implied time zone of the log file (default=UTC)")
     return parser.parse_args()
 
 verbose = lambda *args, **kwargs: print(*args, file=sys.stderr, **kwargs)
 
 def read_hobo(hobo_csv):
-    '''
+    """
     Read power measurements from HOBO CSV file (not to be confused
     with .hobo proprietary binary format)
-    '''
+    """
     if hobo_csv is None:
         verbose('No HOBO CSV file given, skipping')
         return None
@@ -62,15 +63,17 @@ def read_hobo(hobo_csv):
 
     # Read entire CSV, parsing "Date Time" column as datetime timestamp
     verbose("Reading", hobo_csv)
-    hobo = pd.read_csv(hobo_csv, index_col=dt_column, skiprows=1,
-                       usecols=lambda c: c !='#',
-                       parse_dates=[dt_column], date_parser=lambda c: pd.to_datetime(c + ' ' + tz, utc=True))
+    hobo = pd.read_csv(hobo_csv, skiprows=1, usecols=lambda c: c !='#')
+
+    hobo[dt_column] = pd.to_datetime(hobo[dt_column], format='%m/%d/%y %I:%M:%S %p').dt.tz_localize('UTC')
+    hobo.set_index(dt_column, inplace=True)
+    #parse_dates=[dt_column], date_parser=lambda c: pd.to_datetime(c + ' ' + tz, utc=True))
 
     # Simplify column names (drops serial number)
     #print('Using index:', hobo.index.name, 'as', hobo_time)
     hobo.index.name = 'time'
     hobo.columns = [col.split(',', 1)[0] for col in hobo.columns]
-    if cmdline.hoboshift:
+    if cmdline.hoboshift is not None:
         hobo.index += pd.Timedelta(cmdline.hoboshift, unit='second')
     return hobo
 
@@ -86,6 +89,8 @@ def read_log(logfile):
             fields = line.split('|')
             if len(fields) == 5:
                 timestamp = pd.Timestamp(fields[0])
+                if timestamp.tzinfo is None:
+                    timestamp = timestamp.tz_localize(cmdline.tz)
                 batchid = int(fields[3].split('=')[1])
                 params = fields[4].strip()
                 if fields[2] == 'start':
@@ -299,7 +304,7 @@ def convert_histogram(df):
             continue
 
         # Split into left and right fields
-        fields = df[col].str.split('=', 1, expand=True)
+        fields = df[col].str.split('=', n=1, expand=True)
 
         # Convert left percentage
         if all(fields[0].str.endswith('%')):
@@ -409,7 +414,8 @@ def main():
 
     if cmdline.output:
         key_cols.remove('replicate')
-        grouping = joined.groupby(key_cols)
+        numeric_cols = [c for c in joined.columns if c not in key_cols and pd.api.types.is_numeric_dtype(joined[c].dtype)]
+        grouping = joined[key_cols + numeric_cols].groupby(key_cols)
         means = grouping.mean().add_suffix('__mean')
         medians = grouping.median().add_suffix('__median')
         stds = grouping.std().add_suffix('__std')
