@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 
 import sys
+import re
 import json
 import logging
 import argparse
 import random
 
 from subprocess import Popen, PIPE, STDOUT, TimeoutExpired
+import subprocess as sp
 from time import sleep
 
 from string import Template
@@ -142,19 +144,44 @@ def setup_logger(cmdline):
     return logger
 
 
-def drop_caches():
+def findmnt(filename):
+    """
+    Finds the mountpoint for the given filename using findmnt(8)
+    """
+    proc = Popen(["findmnt", "-T", str(filename), "-J"], stdout=PIPE, text=True)
+    try:
+        result = proc.communicate(timeout=cmdline.timeout)
+    except TimeoutExpired:
+        logger.error("Timeout waiting for findmnt")
+        return None
+    if proc.returncode != 0:
+        return None
+    j = json.loads(result[0])
+    fses = j['filesystems']
+    if len(fses) > 0:
+        return fses[0]['target']
+    return None
+
+
+def drop_caches(filename=None):
     if cmdline.no_drop_caches:
         logger.debug('Skipping drop_caches, disabled by command line')
         return
     try:
-        drop_caches = '/proc/sys/vm/drop_caches'
-        logger.info('echo 3 > ' + drop_caches)
-        with open(drop_caches, 'w') as f:
-            f.write('3')
-    except FileNotFoundError:
-        logger.error('File not found ' + drop_caches)
-    except PermissionError:
-        logger.error('Permission denied ' + drop_caches)
+        logger.info('sync')
+        sp.run("sync", shell=True)
+        logger.info('drop caches')
+        sp.run("echo 3 > /proc/sys/vm/drop_caches", shell=True)
+
+        if filename is not None:
+            mountpoint = findmnt(filename)
+            if mountpoint is None:
+                logger.warning(f"Cannot find mountpoint for {filename}")
+                return
+            logger.info('fstrim -v ' + str(mountpoint))
+            sp.run("fstrim -v " + str(mountpoint), shell=True)
+    except Exception as e:
+        logger.error(e.str())
 
 
 def main():
@@ -185,8 +212,18 @@ def main():
         
         logger.info("Number of jobs for replicate %s: %d" % (str(replicate), len(replicate_jobs)))
 
+        regex = re.compile(r'^filename=(?P<filename>[\w\/]+)$')
         for job_num, job in enumerate(replicate_jobs):
-            drop_caches()
+            #drop_caches()
+            filename = None
+            for line in job.fio.split('\n'):
+                if m := regex.match(line):
+                    filename = m['filename']
+                    break
+            if filename is None:
+                logger.warning("Cannot find filename in fio script, will skip fstrim")
+            drop_caches(filename)
+
             logger.info("Starting job %d of %d (replicate %s)" % \
                         (job_num + 1, len(replicate_jobs), replicate))
             if cmdline.cooldown > 0:
