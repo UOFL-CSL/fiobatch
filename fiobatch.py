@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import sys
+import os
 import re
 import json
 import logging
@@ -41,8 +42,21 @@ class FioJob(object):
         if 'mapping' in self.__dict__:
             return ', '.join('%s=%s' % (str(k), str(v)) for k, v in self.mapping.items())
 
+    def run_before(self):
+        if cmdline.before is not None:
+            env = os.environ.copy()
+            for k, v in self.mapping.items():
+                env['param_' + str(k)] = str(v)
+            logger.info(f"Before: {cmdline.before}")
+            result = sp.run(cmdline.before, env=env, shell=True, capture_output=True)
+            if result.returncode != 0:
+                logger.error(f"Process returned {result.returncode}:\n" + result.stderr)
+            elif len(result.stdout) > 0:
+                logger.info("Output:\n" + result.stdout.decode('ascii'))
+
 
     def run(self):
+        self.run_before()
         logger.debug("fio input:\n" + self.fio)
         logger.info("start|batchid=%d|%s" % (self.batchid, str(self)))
         self.proc = Popen(self.cmd, stdin=PIPE, stdout=PIPE, stderr=PIPE, text=True)
@@ -117,6 +131,7 @@ def parse_cmdline():
     parser.add_argument('--norandom', action='store_true', help="Do not shuffle jobs")
     parser.add_argument('--cooldown', metavar='SECONDS', type=float, default=2, help="cool down time between jobs")
     parser.add_argument('--no_drop_caches', action='store_true', help="Do not attempt to drop caches before each workload")
+    parser.add_argument('--before', '-B', metavar='COMMAND', help="Run COMMAND before each workload")
     parsed = parser.parse_args()
 
     parsed.parameters = read_params(parsed.parameters)
