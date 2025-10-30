@@ -131,6 +131,7 @@ def parse_cmdline():
     parser.add_argument('--norandom', action='store_true', help="Do not shuffle jobs")
     parser.add_argument('--cooldown', metavar='SECONDS', type=float, default=2, help="cool down time between jobs")
     parser.add_argument('--no_drop_caches', action='store_true', help="Do not attempt to drop caches before each workload")
+    parser.add_argument('--fstrim', action='store_true', help="Run fstrim on mountpoint for test file before each workload")
     parser.add_argument('--before', '-B', metavar='COMMAND', help="Run COMMAND before each workload")
     parsed = parser.parse_args()
 
@@ -188,13 +189,14 @@ def drop_caches(filename=None):
         logger.info('drop caches')
         sp.run("echo 3 > /proc/sys/vm/drop_caches", shell=True)
 
-        if filename is not None:
-            mountpoint = findmnt(filename)
-            if mountpoint is None:
-                logger.warning(f"Cannot find mountpoint for {filename}")
-                return
-            logger.info('fstrim -v ' + str(mountpoint))
-            sp.run("fstrim -v " + str(mountpoint), shell=True)
+        if cmdline.fstrim:
+            if filename is not None:
+                mountpoint = findmnt(filename)
+                if mountpoint is None:
+                    logger.warning(f"Cannot find mountpoint for {filename}")
+                    return
+                logger.info('fstrim -v ' + str(mountpoint))
+                sp.run("fstrim -v " + str(mountpoint), shell=True)
     except Exception as e:
         logger.error(e.str())
 
